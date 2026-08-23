@@ -11,6 +11,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 load_dotenv()
 
@@ -31,7 +32,7 @@ def inicializar_navegador() -> webdriver.Chrome:
     os.makedirs(PASTA_BOLETOS, exist_ok=True)
 
     options = Options()
-    
+
     if os.getenv("CI"):
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
@@ -47,7 +48,7 @@ def inicializar_navegador() -> webdriver.Chrome:
     options.add_experimental_option("prefs", prefs)
 
     navegador = webdriver.Chrome(options=options)
-    
+
     if os.getenv("CI"):
         navegador.set_window_size(1920, 1080)
     else:
@@ -58,16 +59,12 @@ def inicializar_navegador() -> webdriver.Chrome:
 
 def realizar_login(navegador: webdriver.Chrome, wait: WebDriverWait) -> None:
     navegador.get(SITE_BOLETO)
-    time.sleep(4)
 
-    for _ in range(5):
-        try:
-            campo_login = navegador.find_element(By.XPATH, "//input[@type='text']")
-            navegador.execute_script("arguments[0].value = arguments[1];", campo_login, EMAIL_USER)
-            navegador.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", campo_login)
-            break
-        except Exception:
-            time.sleep(1)
+    campo_login = wait.until(
+        EC.presence_of_element_located((By.XPATH, "//input[@type='text']"))
+    )
+    navegador.execute_script("arguments[0].value = arguments[1];", campo_login, EMAIL_USER)
+    navegador.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", campo_login)
 
     campo_senha = navegador.find_element(By.XPATH, "//input[@type='password']")
     navegador.execute_script("arguments[0].value = arguments[1];", campo_senha, PASSWORD_USER)
@@ -78,32 +75,40 @@ def realizar_login(navegador: webdriver.Chrome, wait: WebDriverWait) -> None:
 
 
 def extrair_url_pdf(navegador: webdriver.Chrome, wait: WebDriverWait) -> str:
-    time.sleep(3)
-    botao_download = navegador.find_element(By.XPATH, "//*[contains(text(), 'Baixar') or contains(text(), 'PDF')]")
+    xpath_selector = (
+        "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'baixar') "
+        "or contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'pdf')]"
+    )
+
+    botao_download = wait.until(
+        EC.element_to_be_clickable((By.XPATH, xpath_selector))
+    )
     navegador.execute_script("arguments[0].click();", botao_download)
-    time.sleep(5)
-    
-    arquivos = glob.glob(os.path.join(PASTA_BOLETOS, "*.pdf"))
+
+    for _ in range(15):
+        time.sleep(1)
+        arquivos = glob.glob(os.path.join(PASTA_BOLETOS, "*.pdf"))
+        if arquivos:
+            break
+
     if not arquivos:
         raise FileNotFoundError("O arquivo PDF do boleto nao foi baixado.")
-    
+
     arquivo_baixado = max(arquivos, key=os.path.getctime)
     if os.path.exists(CAMINHO_PDF):
         os.remove(CAMINHO_PDF)
     os.rename(arquivo_baixado, CAMINHO_PDF)
     return CAMINHO_PDF
 
-
 def salvar_pdf(dados_pdf: str, navegador: webdriver.Chrome) -> None:
     if dados_pdf.startswith("data:application/pdf;base64,"):
         dados_pdf = dados_pdf.split(",")[1]
-    
+
     conteudo_pdf = base64.b64decode(dados_pdf)
-    
+
     os.makedirs(PASTA_BOLETOS, exist_ok=True)
     with open(CAMINHO_PDF, "wb") as f:
         f.write(conteudo_pdf)
-
 
 def enviar_email(caminho_anexo: str) -> None:
     msg = MIMEMultipart()
@@ -130,8 +135,7 @@ def main() -> None:
 
     try:
         realizar_login(navegador, wait)
-        url_pdf = extrair_url_pdf(navegador, wait)
-        salvar_pdf(url_pdf, navegador)
+        extrair_url_pdf(navegador, wait)
         enviar_email(CAMINHO_PDF)
         print("Processo concluido com sucesso!")
     except Exception as erro:
