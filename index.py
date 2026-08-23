@@ -46,7 +46,41 @@ def inicializar_navegador() -> webdriver.Chrome:
         
     return navegador
 
-def realizar_login(navegador: webdriver.Chrome, wait: WebDriverWait) -> None:
+def realizar_login(navegador, wait) -> None:
+    navegador.get(SITE_BOLETO)
+
+    time.sleep(3)
+
+    campo_login = None
+    for _ in range(5):
+        try:
+            elementos = navegador.find_elements(By.XPATH, "//input[@type='text']")
+            if elementos and elementos[0].is_displayed():
+                campo_login = elementos[0]
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+
+    if not campo_login:
+        raise Exception("Campo de login nao foi encontrado a tempo.")
+
+    try:
+        campo_login.clear()
+        campo_login.send_keys(EMAIL_USER)
+    except Exception:
+        navegador.execute_script(
+            "arguments[0].value = arguments[1];", campo_login, EMAIL_USER
+        )
+
+    campo_senha = navegador.find_element(By.XPATH, "//input[@type='password']")
+    campo_senha.clear()
+    campo_senha.send_keys(PASSWORD_USER)
+
+    botao_entrar = navegador.find_element(
+        By.XPATH, "//*[contains(text(), 'Entrar')]"
+    )
+    botao_entrar.click()
     navegador.get(SITE_BOLETO)
     
     time.sleep(3)
