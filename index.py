@@ -1,59 +1,49 @@
-import os
-import time
-import glob
 import base64
+import os
+import sys
 import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.application import MIMEApplication
+from email.message import EmailMessage
+from typing import Optional
+
+import requests
 from dotenv import load_dotenv
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 load_dotenv()
 
-SITE_BOLETO = os.getenv("SITE_BOLETO")
-EMAIL_USER = os.getenv("EMAIL_USER")
-PASSWORD_USER = os.getenv("PASSWORD_USER")
-EMAIL_DE_ENVIO = os.getenv("EMAIL_DE_ENVIO")
-EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
+SITE_BOLETO = os.getenv("SITE_BOLETO", "")
+EMAIL_USER = os.getenv("EMAIL_USER", "")
+PASSWORD_USER = os.getenv("PASSWORD_USER", "")
+EMAIL_DE_ENVIO = os.getenv("EMAIL_DE_ENVIO", "")
+EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "").strip().replace(" ", "")
+
+PASTA_BOLETOS = os.path.abspath("boletos")
+NOME_ARQUIVO_PDF = "Boleto_Atual.pdf"
+CAMINHO_PDF = os.path.join(PASTA_BOLETOS, NOME_ARQUIVO_PDF)
 
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-PASTA_BOLETOS = os.path.abspath("boletos")
-DIRETORIO_BOLETOS = PASTA_BOLETOS
-CAMINHO_PDF = os.path.join(PASTA_BOLETOS, "Boleto_Atual.pdf")
 
 
 def inicializar_navegador() -> webdriver.Chrome:
-    os.makedirs(PASTA_BOLETOS, exist_ok=True)
-
     options = Options()
-
+    
     if os.getenv("CI"):
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-    prefs = {
-        "download.default_directory": PASTA_BOLETOS,
-        "download.prompt_for_download": False,
-        "download.directory_upgrade": True,
-        "plugins.always_open_pdf_externally": True,
-    }
-    options.add_experimental_option("prefs", prefs)
-
+        
     navegador = webdriver.Chrome(options=options)
-
+    
     if os.getenv("CI"):
         navegador.set_window_size(1920, 1080)
     else:
         navegador.set_window_size(375, 812)
-
+        
     return navegador
 
 
@@ -61,72 +51,88 @@ def realizar_login(navegador: webdriver.Chrome, wait: WebDriverWait) -> None:
     navegador.get(SITE_BOLETO)
 
     campo_login = wait.until(
-        EC.presence_of_element_located((By.XPATH, "//input[@type='text']"))
+        EC.element_to_be_clickable((By.XPATH, "//input[@type='text']"))
     )
-    navegador.execute_script("arguments[0].value = arguments[1];", campo_login, EMAIL_USER)
-    navegador.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", campo_login)
+    campo_login.clear()
+    campo_login.send_keys(EMAIL_USER)
 
-    campo_senha = navegador.find_element(By.XPATH, "//input[@type='password']")
-    navegador.execute_script("arguments[0].value = arguments[1];", campo_senha, PASSWORD_USER)
-    navegador.execute_script("arguments[0].dispatchEvent(new Event('input', { bubbles: true }));", campo_senha)
+    campo_senha = wait.until(
+        EC.element_to_be_clickable((By.XPATH, "//input[@type='password']"))
+    )
+    campo_senha.clear()
+    campo_senha.send_keys(PASSWORD_USER)
 
-    botao_entrar = navegador.find_element(By.XPATH, "//*[contains(text(), 'Entrar')]")
-    navegador.execute_script("arguments[0].click();", botao_entrar)
+    botao_entrar = wait.until(
+        EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Entrar')]"))
+    )
+    botao_entrar.click()
 
 
 def extrair_url_pdf(navegador: webdriver.Chrome, wait: WebDriverWait) -> str:
-    xpath_selector = (
-        "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'baixar') "
-        "or contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'pdf')]"
+    drop = wait.until(
+        EC.element_to_be_clickable(
+            (By.XPATH, "//span[contains(@class, 'js-dropdown__current')]")
+        )
     )
+    navegador.execute_script("arguments[0].click();", drop)
 
-    botao_download = wait.until(
-        EC.element_to_be_clickable((By.XPATH, xpath_selector))
+    btn = wait.until(
+        EC.presence_of_element_located((By.ID, "btn_imprimir_fat_home_"))
     )
-    navegador.execute_script("arguments[0].click();", botao_download)
+    navegador.execute_script("arguments[0].click();", btn)
 
-    for _ in range(15):
-        time.sleep(1)
-        arquivos = glob.glob(os.path.join(PASTA_BOLETOS, "*.pdf"))
-        if arquivos:
-            break
+    xpath_pdf = (
+        "//*[@id='modalImpressao']//iframe | "
+        "//*[@id='modalImpressao']//embed | "
+        "//*[@id='modalImpressao']//object"
+    )
+    elemento_pdf = wait.until(EC.presence_of_element_located((By.XPATH, xpath_pdf)))
 
-    if not arquivos:
-        raise FileNotFoundError("O arquivo PDF do boleto nao foi baixado.")
+    url_pdf = elemento_pdf.get_attribute("src") or elemento_pdf.get_attribute("data")
+    if not url_pdf:
+        raise ValueError("Não foi possível capturar a URL/Data do PDF.")
 
-    arquivo_baixado = max(arquivos, key=os.path.getctime)
-    if os.path.exists(CAMINHO_PDF):
-        os.remove(CAMINHO_PDF)
-    os.rename(arquivo_baixado, CAMINHO_PDF)
-    return CAMINHO_PDF
+    return url_pdf
 
-def salvar_pdf(dados_pdf: str, navegador: webdriver.Chrome) -> None:
-    if dados_pdf.startswith("data:application/pdf;base64,"):
-        dados_pdf = dados_pdf.split(",")[1]
 
-    conteudo_pdf = base64.b64decode(dados_pdf)
-
+def salvar_pdf(url_pdf: str, navegador: webdriver.Chrome) -> None:
     os.makedirs(PASTA_BOLETOS, exist_ok=True)
-    with open(CAMINHO_PDF, "wb") as f:
-        f.write(conteudo_pdf)
+
+    if url_pdf.startswith("data:application/pdf;base64,"):
+        dados_base64 = url_pdf.split(",")[1]
+        conteudo_pdf = base64.b64decode(dados_base64)
+    else:
+        session = requests.Session()
+        for cookie in navegador.get_cookies():
+            session.cookies.set(cookie["name"], cookie["value"])
+        resposta = session.get(url_pdf)
+        resposta.raise_for_status()
+        conteudo_pdf = resposta.content
+
+    with open(CAMINHO_PDF, "wb") as arquivo:
+        arquivo.write(conteudo_pdf)
+
 
 def enviar_email(caminho_anexo: str) -> None:
-    msg = MIMEMultipart()
-    msg['From'] = EMAIL_DE_ENVIO
-    msg['To'] = EMAIL_DE_ENVIO
-    msg['Subject'] = "Boleto do Mês Disponível"
+    msg = EmailMessage()
+    msg["Subject"] = "Boleto do Mês"
+    msg["From"] = EMAIL_DE_ENVIO
+    msg["To"] = EMAIL_USER
+    msg.set_content("Oi mãe! Segue em anexo o boleto deste mês.")
 
-    corpo = "Olá,\n\nSegue em anexo o boleto deste mês gerado automaticamente.\n\nAtenciosamente."
-    msg.attach(MIMEText(corpo, 'plain'))
+    with open(caminho_anexo, "rb") as arquivo:
+        conteudo_pdf = arquivo.read()
+        msg.add_attachment(
+            conteudo_pdf,
+            maintype="application",
+            subtype="pdf",
+            filename="Boleto_Mes.pdf",
+        )
 
-    with open(caminho_anexo, "rb") as f:
-        anexo = MIMEApplication(f.read(), _subtype="pdf")
-        anexo.add_header('Content-Disposition', 'attachment', filename=os.path.basename(caminho_anexo))
-        msg.attach(anexo)
-
-    with smtplib.SMTP_SSL(SMTP_SERVER, 465) as server:
-        server.login(EMAIL_DE_ENVIO, EMAIL_APP_PASSWORD)
-        server.send_message(msg)
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as smtp:
+        smtp.starttls()
+        smtp.login(EMAIL_DE_ENVIO, EMAIL_APP_PASSWORD)
+        smtp.send_message(msg)
 
 
 def main() -> None:
@@ -135,12 +141,13 @@ def main() -> None:
 
     try:
         realizar_login(navegador, wait)
-        extrair_url_pdf(navegador, wait)
+        url_pdf = extrair_url_pdf(navegador, wait)
+        salvar_pdf(url_pdf, navegador)
         enviar_email(CAMINHO_PDF)
-        print("Processo concluido com sucesso!")
+        print("Processo concluído com sucesso!")
     except Exception as erro:
         print(f"Ocorreu um erro na etapa: {erro}")
-        raise erro
+        raise erro  
     finally:
         navegador.quit()
 
