@@ -48,6 +48,31 @@ def inicializar_navegador() -> webdriver.Chrome:
 
 def realizar_login(navegador: webdriver.Chrome, wait: WebDriverWait) -> None:
     navegador.get(SITE_BOLETO)
+    
+    time.sleep(3)
+
+    for tentativa in range(5):
+        try:
+            campo_login = navegador.find_element(By.XPATH, "//input[@type='text']")
+            campo_login.clear()
+            campo_login.send_keys(EMAIL_USER)
+            break
+        except (StaleElementReferenceException, Exception):
+            if tentativa == 4:
+                raise
+            time.sleep(2)
+
+    campo_senha = wait.until(
+        EC.element_to_be_clickable((By.XPATH, "//input[@type='password']"))
+    )
+    campo_senha.clear()
+    campo_senha.send_keys(PASSWORD_USER)
+
+    botao_entrar = wait.until(
+        EC.element_to_be_clickable((By.XPATH, "//*[contains(text(), 'Entrar')]"))
+    )
+    botao_entrar.click()
+    navegador.get(SITE_BOLETO)
 
     time.sleep(2)
 
