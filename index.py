@@ -1,5 +1,6 @@
 import base64
 import os
+import sys
 import smtplib
 from email.message import EmailMessage
 from typing import Optional
@@ -30,11 +31,19 @@ SMTP_PORT = 587
 
 def inicializar_navegador() -> webdriver.Chrome:
     options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    
+    if os.getenv("CI"):
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        
     navegador = webdriver.Chrome(options=options)
-    navegador.set_window_size(1920, 1080)
+    
+    if os.getenv("CI"):
+        navegador.set_window_size(1920, 1080)
+    else:
+        navegador.set_window_size(375, 812)
+        
     return navegador
 
 
@@ -137,7 +146,8 @@ def main() -> None:
         enviar_email(CAMINHO_PDF)
         print("Processo concluído com sucesso!")
     except Exception as erro:
-        print(f"Ocorreu um erro durante a execução: {erro}")
+        print(f"Ocorreu um erro na etapa: {erro}")
+        raise erro  
     finally:
         navegador.quit()
 
