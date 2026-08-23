@@ -1,0 +1,6 @@
+boletos/
+
+.env
+
+venv/
+__pycache__/

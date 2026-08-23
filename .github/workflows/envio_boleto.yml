@@ -1,0 +1,47 @@
+name: CI e Agendamento do Boleto
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 12 3 * *'
+  workflow_dispatch:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar dependências
+        run: |
+          pip install selenium python-dotenv requests pytest
+      - name: Rodar Testes Unitarios
+        run: pytest test_index.py
+
+  executar-bot:
+    needs: testes
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar dependências
+        run: |
+          pip install selenium python-dotenv requests
+      - name: Executar Script
+        env:
+          SITE_BOLETO: ${{ secrets.SITE_BOLETO }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          PASSWORD_USER: ${{ secrets.PASSWORD_USER }}
+          EMAIL_DE_ENVIO: ${{ secrets.EMAIL_DE_ENVIO }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+        run: python index.py
